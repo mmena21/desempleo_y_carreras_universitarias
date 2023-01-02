@@ -1,0 +1,614 @@
+---
+title: "EL DESEMPLEO Y LAS CARRERAS UNIVERSITARIAS EN ESPAÑA"
+description: |
+  En este trabajo analizaremos el desempleo existente junto a las carreras con mayor tasa de paro en España
+author: María Mena Esteban (mames3@alumni.uv.es)  #--
+date: 2022-12-31                  #--
+categories: [trabajo BigData, Desempleo]   #--
+image: "./imagenes/imagen_01.png"
+title-block-banner: true #- {true, false, "green","#AA0000"}
+title-block-banner-color: "#ed465f"    #-"#FFFFFF" 
+toc: true
+toc-location: left
+toc-depth: 3
+smooth-scroll: true
+format: 
+  html:
+    backgroundcolor: "#B0E0E6"
+    standalone: true  
+    link-external-newwindow: true
+    #css: ./assets/my_css_file.css   #- CUIDADO!!!!
+code-tools: true
+code-link: true
+---
+
+## INTRODUCCIÓN
+
+La tasa de paro es un porcentaje que expresa la proporción de población desempleada que hay respecto al total de población activa, teniendo siempre en cuenta que una persona desempleada o parada es aquel trabajador que no tiene empleo y lo busca de forma activa. 
+España es el país con la tasa de paro más alta de la Unión Europea. Actualmente tenemos un 12,5% de paro,lo que equivale al doble de la media de la UE. La situación se vuelve todavía más dramática si miramos el paro juvenil: 32,2%, muy por encima del resto de países.
+
+```{r, echo = FALSE, out.width = "60%"}
+library("vembedr")
+embed_url("https://youtu.be/Nq4qlxsiHs0")
+```
+
+En este trabajo analizaremos con datos previos a la pandemia la situación de paro existente en el país, según sexo y comunidades autónomas y luego haremos un repaso de las carreras universitarias con mayor tasa de paro.
+
+
+
+![Cola de paro en España](https://cadenaser00.epimg.net/ser/imagenes/2019/09/26/economia/1569512851_981812_1569742682_noticia_normal.jpg)
+
+## DATOS
+
+Los datos utilizados para realizar este trabajo han sido extraídos del INE a fecha de 2019 y en formato csv, ya que para mí es la manera más fácil y cómoda de trabajar los datos.
+
+## LAS DIFERENTES COMUNIDADES AUTÓNOMAS Y EL DESEMPLEO
+
+Una de las cosas que más llaman la atención en el desempleo español es ver las enormes diferencias que existen entre las tasas de paro de las distintas Comunidades Autónomas y el porqué de estas.
+Sería lógico pensar que por la gran movilidad que existe entre el territorio español, las fuerzas del mercado conducirían a un desplazamiento de empresas y trabajadores que a largo plazo reducirían las diferencias entre las tasas de paro de las comunidades.
+Normalmente para las empresas es menos costoso desplazarse a aquellas zonas con mayor abundancia de trabajadores, ya que el coste de contratar a un trabajador es relativamente más barato y  los trabajadores que viven en una zona con una tasa de paro muy elevada tiene más incentivos a emigrar a otro lugar con menor tasa de paro.
+En España este desplazamiento de empresas y trabajadores no es tan común, esto en parte es causa de las competencias normativas de las comunidades. Hay un buen número de competencias normativas que afectan al desempeño de la actividad empresarial y en ocasiones, incluso, pueden llegar a fragmentar el mercado.
+Cuando el mercado está fragmentado hay un menor número de empresas y dichas empresas tiene mayor poder para influir en los precios y klas cantidad intercambiadas, que ahora serán menores, lo que conduce a una menor contratación de trabajadores.
+Además también hay que tener en cuenta otro factor clave para el desempleo español: el gasto público. Un posible incremento del gasto público que no se traduzca en más y mejores servicios a los ciudadanos sería negativo para el empleo, ya que esta acción incrementaría el tipo de interés que a su vez este desincentivaría la inversión empresarial en dicha comunidad y como consecuencia se contratarían a menos trabajadores.
+
+En 2019 podemos apreciar un crecimiento desigual en creación de empleo y reducción del paro entre las diferentes comunidades autónomas. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+library(tidyverse)
+library(sf)
+library(tmap)
+#descargamos la tabla del INE con las tasas de paro según comunidad y sexo
+fs::dir_create("pruebas") #- primero creamos la carpeta "pruebas"
+my_url <- "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/4966.csv?nocab=1" #-pongo el link de la página del INE
+curl::curl_download(my_url, "./pruebas/map.csv")
+map <- rio::import("./pruebas/map.csv")
+#- Importamos la tabla al Global
+map <- rio::import("./pruebas/map.csv") #- rio::import() funciona!! 
+map <- janitor::clean_names(map) 
+
+
+#- Pb con la tasa de paro (en la v. total) tiene , en el decimal
+map <- map %>% mutate(total = stringr::str_replace(total, "," , "." ))
+
+map <- map %>% mutate(total = as.numeric(total)) #- un NA en Melilla 2016
+#- OK, ya (casi) tenemos los datos correctamente leídos/interpretados
+map <- map %>% rename(tasa_paro = total)
+map <- map %>% rename(CCAA = comunidades_y_ciudades_autonomas)
+#- 2) La v "CCAA" tiene el código y el nombre
+# ademas, en provincias estan las 16 CC.AA y el "Total nacional"
+map <- map %>% 
+  mutate(CCAA = ifelse(CCAA == "Total Nacional",
+                       paste("00", CCAA),
+                       CCAA))
+map <- map %>%  
+  tidyr::separate(CCAA, sep = " ", 
+                  into = c("ine_ccaa", "ine_ccaa.n"), extra = "merge") 
+#- vamos a hacer ahora una coropleta con la tasa de paro de cada CA
+df_ccaa <- map %>%
+  filter(edad == "Total") %>% 
+  filter(ine_ccaa.n != "Total Nacional") %>% 
+  filter(sexo == "Ambos sexos") %>% 
+  select(-c(edad, sexo)) 
+
+#- me quedo con 2019 que es el año en el que estamos analizando todo
+df_ccaa_2019 <- df_ccaa %>% filter(periodo == 2019)
+
+#- cargo geometrías de provincias
+df_geo_prov <- pjpv.curso.R.2022::LAU2_prov_2020_canarias
+
+
+
+#- me quedo con las vv. q me interesan
+df_geo_prov <- df_geo_prov %>% select(ine_prov, ine_prov.n, ine_ccaa, ine_ccaa.n)
+
+
+#- podemos "agregar" geometrías
+df_geo_ccaa <- df_geo_prov %>% 
+  group_by(ine_ccaa, ine_ccaa.n) %>% summarize() %>% ungroup()
+
+
+
+# df_geo_esp <- df_geo_ccaa %>% group_by(1) %>% summarise()
+# plot(df_geo_esp, max.plot = 1)
+
+
+#- junto geometría (df_geo_ccaa) con datos INE (df_ccaa_2021)
+#- las geometrías a la izquierda
+df_ok <- left_join(df_geo_ccaa, df_ccaa_2019, by = c("ine_ccaa" = "ine_ccaa"))
+
+#- basic plot
+p <- ggplot() + 
+  geom_sf(data = df_ok, 
+          aes(geometry = geometry, fill = tasa_paro), 
+          color = "white", size = 0.09) 
+
+
+p + scale_fill_distiller(palette =  18, name = NULL) +
+  labs(title = "Tasa de empleo en 2019 según Provincias " , caption = "Datos provenientes del INE") + theme_void()
+
+colnames(df_ok)[6] <- "Tasa de paro 2019"
+tmap_mode("plot")
+tm_shape(df_ok) + tm_polygons("Tasa de paro 2019",  n = 5, style = "quantile", palette = "PuRd") + tm_layout(bg.color = "skyblue")
+
+```
+Como podemos apreciar en las imágenes las comunidades con más paro de España son Extremadura (23,48%), Andalucía (20,80%) y Canarias (18,78%) y las comunidades con menos paro son Navarra (9,01%), País Vasco (9,09%) y Rioja (9,89%).
+Si hacemos un cómputo general de cuánto aumento el número de parados en todo 2019 vemos que las comunidades autónomas más afectadas fueron Cantabria, con 4900 parados más, Castilla La Mancha con 3700 y Murcia con 3500.
+
+Según el Instituto Nacional de Estadística, en el último trimestre del año 2019, las comunidades en las que el paro descendió más fueron Andalucía (–41.900 parados),  Canarias (–22.100 parados) y Cataluña (–16.300 parados).  En términos anuales, Cataluña (–45.600 parados), Comunidad de Madrid (–43.800 parados) y Canarias (–10.800 parados) son las comunidades en las que más se redujo el paro en este año.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+library(tidyverse)
+library(sf)
+library(tmap)
+#descargamos la tabla del INE con las tasas de paro según comunidad y sexo
+fs::dir_create("pruebas") #- primero creamos la carpeta "pruebas"
+my_url <- "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/4966.csv?nocab=1" #-pongo el link de la página del INE
+curl::curl_download(my_url, "./pruebas/map.csv")
+map <- rio::import("./pruebas/map.csv")
+#- Importamos la tabla al Global
+map <- rio::import("./pruebas/map.csv") #- rio::import() funciona!! 
+
+#- antes de hacer nada: los nombres de las variables tienen q estar bien (ser sintácticamente válidos)
+
+map <- janitor::clean_names(map) 
+
+map <- map %>% mutate(total = stringr::str_replace(total, "," , "." ))
+map <- map %>% mutate(total = as.numeric(total)) #- un NA en Melilla 2016
+#- OK, ya (casi) tenemos los datos correctamente leídos/interpretados
+map <- map %>% rename(tasa_paro = total)
+map <- map %>% rename(CCAA = comunidades_y_ciudades_autonomas)
+#- 2) La v "CCAA" tiene el código y el nombre
+# ademas, en provincias estan las 16 CC.AA y el "Total nacional"
+map <- map %>% 
+  mutate(CCAA = ifelse(CCAA == "Total Nacional",
+                       paste("00", CCAA),
+                       CCAA))
+map <- map %>%  
+  tidyr::separate(CCAA, sep = " ", 
+                  into = c("ine_ccaa", "ine_ccaa.n"), extra = "merge") 
+#- vamos a hacer ahora una coropleta con la tasa de paro de cada CA
+df_ccaa <- map %>%
+  filter(edad == "Total") %>% 
+  filter(ine_ccaa.n != "Total Nacional") %>% 
+  filter(sexo == "Ambos sexos") %>% 
+  select(-c(edad, sexo)) 
+
+#- me quedo con 2019 que es el año en el que estamos analizando todo
+df_ccaa_2019 <- df_ccaa %>% filter(periodo == 2019)
+
+#- cargo geometrías de provincias
+df_geo_prov <- pjpv.curso.R.2022::LAU2_prov_2020_canarias
+
+
+
+
+#- me quedo con las vv. q me interesan
+df_geo_prov <- df_geo_prov %>% select(ine_prov, ine_prov.n, ine_ccaa, ine_ccaa.n)
+
+#- podemos "agregar" geometrías
+df_geo_ccaa <- df_geo_prov %>% 
+  group_by(ine_ccaa, ine_ccaa.n) %>% summarize() %>% ungroup()
+
+
+# df_geo_esp <- df_geo_ccaa %>% group_by(1) %>% summarise()
+# plot(df_geo_esp, max.plot = 1)
+
+
+#- junto geometría (df_geo_ccaa) con datos INE (df_ccaa_2021)
+#- las geometrías a la izquierda
+df_ok <- left_join(df_geo_ccaa, df_ccaa_2019, by = c("ine_ccaa" = "ine_ccaa"))
+
+#mapa con números rosa
+#- para ello calculo centroides (!!!)
+df_geo_ccaa <- cbind(df_geo_ccaa, st_coordinates(st_centroid(df_geo_ccaa$geometry)))
+
+#- vuelvo a juntar datos EPA con geometrías (q ahora incorporan los centroides)
+df_ok <- left_join(df_geo_ccaa, df_ccaa_2019, by = c("ine_ccaa" = "ine_ccaa"))
+
+p <- ggplot() + 
+  geom_sf(data = df_ok, 
+          aes(geometry = geometry), fill = "pink", 
+          color = "black", size = 0.09) +
+  geom_text(data = df_ok, aes(x = X, y = Y, label = tasa_paro),
+            color = "black",  
+            check_overlap = TRUE, size = 3)
+
+
+
+# Seleccionar la comunidad autónoma que deseas señalar
+df_ok_seleccionada <- df_ok %>%
+  filter(ine_ccaa == "10")
+
+# Crear el gráfico con la comunidad autónoma seleccionada en rojo
+p <- ggplot() + 
+  geom_sf(data = df_ok, 
+          aes(geometry = geometry), fill = "pink", 
+          color = "black", size = 0.09) +
+  geom_sf(data = df_ok_seleccionada, 
+          aes(geometry = geometry), fill = "red", 
+          color = "black", size = 0.09) +
+  geom_text(data = df_ok, aes(x = X, y = Y, label = tasa_paro),
+            color = "black",  
+            check_overlap = TRUE, size = 3)
+
+
+#- luego ya hay que tunearlo (un poco)
+p + pjpv.curso.R.2022::theme_pjp_maps() +
+  labs(title = "Tasa de desempleo (%)", 
+       subtitle = "(año 2019)", 
+       caption = "Datos provenientes del INE")
+
+```
+En 2019 la comunidad valenciana tuvo una reducción sensiblemente por encima de la media española con una reducción interanual del 1.8% según los datos realizados por el Instituto Nacional de Empleo (INE). Se cerraba el año con una tasa de paro del 14,11%.
+Cabe destacar que en  diciembre de 2019, el número de desempleados en la Comunidad se redujo en 2.943 personas respecto al mes anterior, un 0,82 % menos, lo que la situaba como la tercera comunidad en términos absolutos en reducir la tasa de paro.
+
+## CÓMO SE PODRÍA SOLUCIONAR EL PROBLEMA DEL PARO
+
+Una mayor movilidad entre los trabajadores de las diferentes comunidades autónomas sería buena para reducir la tasa de paro. Al estar el mercado fragmentado, las empresas se marchan para asumir menores costes y así tener mejores posibilidades para ejercer su actividad. 
+Si las comunidades brindasen oportunidades parecidas a estas empresas incentivarían la inversión y la disminución de la tasa de paro. Las inversiones en otras comunidades con más desempleo pueden generar beneficios que podrían retornar a la comunidad de origen en forma de dividendos ya que los inversores son originarios de la comunidad con menor desempleo.
+La diversificación geográfica también ayudaría a tener los activos mas diversificados y poder paliar mejor las crisis económicas. Ante una crisis en la comunidad de origen los mejores resultados en otra comunidad pueden ser el salvavidas de la empresa, evitando la pérdida de muchos puestos de trabajo.
+
+La conclusión es que el sistema autonómico no ha sido gestionado correctamente en los últimos años en lo que se refiere a la reducción del desempleo. La razón fundamental es que no se ha sabido fomentar la movilidad entre las diferentes comunidades autónomas y se han creado grandes desigualdades entre las mismas.
+ 
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+library(tidyverse)
+library(sf)
+library(tmap)
+#descargamos la tabla del INE con las tasas de paro según comunidad y sexo
+fs::dir_create("pruebas") #- primero creamos la carpeta "pruebas"
+my_url <- "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/4966.csv?nocab=1" #-pongo el link de la página del INE
+curl::curl_download(my_url, "./pruebas/map.csv")
+map <- rio::import("./pruebas/map.csv")
+#- Importamos la tabla al Global
+map <- rio::import("./pruebas/map.csv") #- rio::import() funciona!! 
+map <- janitor::clean_names(map) 
+
+#- Pb con la tasa de paro (en la v. total) tiene , en el decimal
+map <- map %>% mutate(total = stringr::str_replace(total, "," , "." ))
+
+map <- map %>% mutate(total = as.numeric(total)) #- un NA en Melilla 2016
+#- OK, ya (casi) tenemos los datos correctamente leídos/interpretados
+map <- map %>% rename(tasa_paro = total)
+map <- map %>% rename(CCAA = comunidades_y_ciudades_autonomas)
+#- 2) La v "CCAA" tiene el código y el nombre
+# ademas, en provincias estan las 16 CC.AA y el "Total nacional"
+map <- map %>% 
+  mutate(CCAA = ifelse(CCAA == "Total Nacional",
+                       paste("00", CCAA),
+                       CCAA))
+map <- map %>%  
+  tidyr::separate(CCAA, sep = " ", 
+                  into = c("ine_ccaa", "ine_ccaa.n"), extra = "merge") 
+#- vamos a hacer ahora una coropleta con la tasa de paro de cada CA
+df_ccaa <- map %>%
+  filter(edad == "Total") %>% 
+  filter(ine_ccaa.n != "Total Nacional") %>% 
+  filter(sexo == "Ambos sexos") %>% 
+  select(-c(edad, sexo)) 
+
+#- me quedo con 2019 que es el año en el que estamos analizando todo
+df_ccaa_2019 <- df_ccaa %>% filter(periodo == 2019)
+
+#- cargo geometrías de provincias
+df_geo_prov <- pjpv.curso.R.2022::LAU2_prov_2020_canarias
+
+
+
+
+#- me quedo con las vv. q me interesan
+df_geo_prov <- df_geo_prov %>% select(ine_prov, ine_prov.n, ine_ccaa, ine_ccaa.n)
+
+
+#- podemos "agregar" geometrías
+df_geo_ccaa <- df_geo_prov %>% 
+  group_by(ine_ccaa, ine_ccaa.n) %>% summarize() %>% ungroup()
+
+
+# df_geo_esp <- df_geo_ccaa %>% group_by(1) %>% summarise()
+# plot(df_geo_esp, max.plot = 1)
+
+
+#- junto geometría (df_geo_ccaa) con datos INE (df_ccaa_2021)
+#- las geometrías a la izquierda
+df_ok <- left_join(df_geo_ccaa, df_ccaa_2019, by = c("ine_ccaa" = "ine_ccaa"))
+
+#mapa interactivo
+tmap_mode("view")
+tm_shape(df_ok) + tm_polygons("tasa_paro", id = "ine_ccaa.n", popup.vars = TRUE)
+
+```
+
+## DISTRIBUCIÓN DEL PARO EN ESPAÑA 
+
+En el último trimestre de 2019, el número de jóvenes en paro descendió en 62.400 desempleados, lo que supone un 11,8% menos que en el trimestre anterior, con descensos de 46.900 personas entre los jóvenes de 20 a 24 años (-11,8%) y de 15.500 entre los de 16 a 19 años (-11,8%).
+
+Por contra, el paro subió en el último trimestre de 2019 entre los mayores de 55 años, con 37.900 desempleados más (+8%) y en el grupo de 25 a 54 años, que sumó 2.000 parados más (+0,09%).
+
+En el conjunto de 2019, el paro de los jóvenes de 20 a 24 años se redujo en 34.800 desempleados (-9,1%) y bajó en 5.500 personas (-4,5%) entre los jóvenes de 16 a 19 años. Entre los mayores de 55 años, el paro aumentó el año pasado en 13.100 personas (+2,6%), mientras que entre los de 25 a 54 años bajó en 85.200 desempleados (-3,7%).
+
+Como conclusión diremos que los mayores de 50 años concentran la mayor parte del empleo.
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+library(tidyverse)
+library(ggthemes)
+#descargamos la tabla del INE con las tasas de paro según comunidad y sexo
+fs::dir_create("pruebas") #- primero creamos la carpeta "pruebas"
+my_url <- "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/4966.csv?nocab=1" #-pongo el link de la página del INE
+curl::curl_download(my_url, "./pruebas/face.csv")
+face <- rio::import("./pruebas/face.csv")
+#- Importamos la tabla al Global
+face <- rio::import("./pruebas/face.csv") #- rio::import() funciona!! 
+
+face <- janitor::clean_names(face) 
+
+
+#- Pb con la tasa de paro (en la v. total) tiene , en el decimal
+face <- face %>% mutate(total = stringr::str_replace(total, "," , "." ))
+
+face <- face %>% mutate(total = as.numeric(total)) #- un NA en Melilla 2016
+#- OK, ya (casi) tenemos los datos correctamente leídos/interpretados
+face <- face %>% rename(tasa_paro = total)
+face <- face %>% rename(CCAA = comunidades_y_ciudades_autonomas)
+#- 2) La v "CCAA" tiene el código y el nombre
+# ademas, en provincias estan las 16 CC.AA y el "Total nacional"
+face <- face %>% 
+  mutate(CCAA = ifelse(CCAA == "Total Nacional",
+                       paste("00", CCAA),
+                       CCAA))
+face <- face %>%  
+  tidyr::separate(CCAA, sep = " ", 
+                  into = c("ine_ccaa", "ine_ccaa.n"), extra = "merge") 
+
+#gráfico barras ordenado según comunidad
+df <- face %>% filter(edad == "De 25 a 54 años")%>% arrange(desc(tasa_paro))%>% group_by(ine_ccaa.n) %>% select(sexo, ine_ccaa.n,edad, periodo, tasa_paro) %>% filter(periodo == 2019)%>% filter(sexo == "Ambos sexos")%>%filter(ine_ccaa.n != "Total Nacional")
+max_total <- max(df$tasa_paro) 
+p2 <- ggplot(df, aes(x = tasa_paro, y = reorder(ine_ccaa.n, tasa_paro, FUN = desc))) +  
+  geom_bar(stat = "identity" , fill = "#FFC311", position = "dodge", color ="white", alpha = 0.5, size = 0.5) + 
+  labs(title = "Tasa de paro en las diferentes Comunidades", caption = "Fuente: INE",x="Tasa de paro año 2019", y="") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + theme_excel_new()
+p2
+
+```
+
+Actualmente, las mujeres con menos de 50 años han alcanzado un nivel educativo superior al de los hombres de su generación. El 67% de las mujeres de entre 20 y 50 años han completado estudios de educación secundaria superior, frente al 58% de los hombres. Y el 43% tiene estudios terciarios frente al 36% de los hombres.
+Sin embargo, las mujeres españolas generalmente sufren mayores tasas de desempleo que los hombres (seis puntos de diferencia en promedio durante los últimos 15 años), tienen más empleos temporales y parciales no deseados y cobran salarios inferiores (en torno a un 20% por debajo de los hombres).
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+#- Importamos la tabla al Global
+face <- rio::import("./pruebas/face.csv") #- rio::import() funciona!! 
+
+face <- janitor::clean_names(face) 
+
+
+#- Pb con la tasa de paro (en la v. total) tiene , en el decimal
+face <- face %>% mutate(total = stringr::str_replace(total, "," , "." ))
+
+face <- face %>% mutate(total = as.numeric(total)) #- un NA en Melilla 2016
+#- OK, ya (casi) tenemos los datos correctamente leídos/interpretados
+face <- face %>% rename(tasa_paro = total)
+face <- face %>% rename(CCAA = comunidades_y_ciudades_autonomas)
+#- 2) La v "CCAA" tiene el código y el nombre
+# ademas, en provincias estan las 16 CC.AA y el "Total nacional"
+face <- face %>% 
+  mutate(CCAA = ifelse(CCAA == "Total Nacional",
+                       paste("00", CCAA),
+                       CCAA))
+face <- face %>%  
+  tidyr::separate(CCAA, sep = " ", 
+                  into = c("ine_ccaa", "ine_ccaa.n"), extra = "merge") 
+
+#selecionamos los valores que queremos 
+library(ggthemes)
+df <- face %>% filter(edad == "De 25 a 54 años")%>% filter(ine_ccaa.n == "Total Nacional") %>% select(sexo, ine_ccaa.n,edad, periodo, tasa_paro)
+p1 <- ggplot(df, aes(x = periodo, y = tasa_paro, color = edad)) +
+  geom_line() + geom_point() 
+p1 <- p1 + facet_wrap(vars(sexo))+ theme_economist_white() + labs(title = "Evolución de la tasa de desempleo en España", x = "", y = "porcentaje tasa de paro", caption = "Datos provenientes del INE")
+p1
+
+```
+
+## LAS CARRERAS UNIVERSITARIAS CON MÁS PARO
+
+La tasa de parados en universidades públicas es de casi el doble que en universidades privadas en España.
+Conservación y restauración, Filosofía y Literatura son las carreras universitarias con más paro del país, con exactamente un 25,8%, 18,4% y 17,3% de parados en 2019, de acuerdo con los datos del Instituto Nacional de Estadística (INE). 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+
+library(tidyverse)
+
+fs::dir_create("pruebas") #- primero creamos la carpeta "pruebas"
+my_url <- "https://ine.es/jaxi/files/tpx/es/csv_bd/48895.csv?nocab=1" #-pongo el link de la página del INE
+curl::curl_download(my_url, "./pruebas/segunestudios.csv")
+segunestudios <- rio::import("./pruebas/segunestudios.csv")
+
+#arreglo los datos quitando las comas
+segunestudios <- read_delim("pruebas/segunestudios.csv", 
+                            delim = "\t", escape_double = FALSE, 
+                            col_types = cols(Total = col_number()),  
+                            locale = locale(date_names = "es", decimal_mark = ",", grouping_mark = "."), 
+                            trim_ws = TRUE)
+#-Arreglo los nombres
+
+segunestudios <- janitor::clean_names(segunestudios)
+zz <- pjpv.curso.R.2022::pjp_valores_unicos(segunestudios)
+
+#-Arreglo función
+zz <- segunestudios %>% filter(tasas_de_actividad_empleo_y_paro == "Tasa de paro") %>% filter(titulacion %in% c("Pedagogía", "Educación infantil", "Educación primaria", "Bellas artes", "Conservación y restauración", "Arqueología", "Historia", "Filosofía", "Traducción e interpretación", "Literatura", "Economía",  "Psicología", "Criminología", "Geografía","Periodismo","Finanzas y contabilidad","Administración y empresa","Gestión y administración pública","Derecho","Biología","Bioquímica","Biotecnología","Biomedicina","Química","Ciencias del mar","Geología","Física","Matemáticas","Estadística","Informática","Ingeniería de telecomunicación","Ingeniería mecánica", "Ingeniería aeronáutica","Arquitectura y Urbanismo y paisajismo","Ingeniería geomática, topografía y cartografía","Arquitectura técnica","Veterinaria","Odontología","Medicina","Enfermería","Ingeniería biomédica y de la salud","Óptica y optometría","Fisioterapia"))
+zz_1 <- zz %>% group_by(titulacion) %>% arrange(desc(total)) %>% filter(sexo == "Hombres")
+
+colnames(zz_1)[2] <- "Titulación"
+
+colnames(zz_1)[3] <- "Tasa de paro"
+
+colnames(zz_1)[4] <- "Porcentaje"
+
+#gráfico de barras para ambos sexos
+
+zz_3  <- zz %>% group_by(titulacion) %>% arrange(desc(total)) %>% filter(sexo == "Ambos sexos")
+max_total <- max(zz_3$total) 
+grafica_tasa_paro <- ggplot(zz_3, aes(x = total, y = reorder(titulacion, total, FUN = desc))) +  
+  geom_bar(stat = "identity" , fill = "#FFC311", position = "dodge", color ="white", alpha = 0.5, size = 0.5) + 
+  labs(title = "Tasa de paro en las diferentes titulaciones", caption = "Fuente: INE",x="Porcentaje de paro año 2019", y="Titulaciones") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+
+#resaltamos economía
+resaltado <- zz_3 %>% filter(titulacion %in% c("Economía"))
+
+grafica_resaltado <- grafica_tasa_paro + geom_bar(data = resaltado, aes(x = total, y = reorder(titulacion, total, FUN = desc)), stat = "identity", fill = "#FF8D02", position = "dodge", color ="white", alpha = 0.5, size = 0.5) + theme_clean()
+
+library(ggthemes)
+grafica_resaltado
+
+```
+
+Las carreras del área jurídico-social se caracterizan por el elevado número de estudiantes que las cursan y también por ser las que más volumen de ofertas de empleo reciben. Su peso se ha visto incrementado medio punto en el último año y los candidatos con estudios del ámbito jurídico-social aglutinan cuatro de cada diez ofertas (42,4%) en las que se especifica titulación universitaria. Economía es una de las carreras con mejor salida laboral junto a Derecho y ADE.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+library(tidyverse)
+
+fs::dir_create("pruebas") #- primero creamos la carpeta "pruebas"
+my_url <- "https://ine.es/jaxi/files/tpx/es/csv_bd/48895.csv?nocab=1" #-pongo el link de la página del INE
+curl::curl_download(my_url, "./pruebas/segunestudios.csv")
+segunestudios <- rio::import("./pruebas/segunestudios.csv")
+
+#arreglo los datos quitando las comas
+segunestudios <- read_delim("pruebas/segunestudios.csv", 
+                            delim = "\t", escape_double = FALSE, 
+                            col_types = cols(Total = col_number()),  
+                            locale = locale(date_names = "es", decimal_mark = ",", grouping_mark = "."), 
+                            trim_ws = TRUE)
+#-Arreglo los nombres
+
+segunestudios <- janitor::clean_names(segunestudios)
+zz <- pjpv.curso.R.2022::pjp_valores_unicos(segunestudios)
+
+#-Arreglo función
+zz <- segunestudios %>% filter(tasas_de_actividad_empleo_y_paro == "Tasa de paro") %>% filter(titulacion %in% c("Pedagogía", "Educación infantil", "Educación primaria", "Bellas artes", "Conservación y restauración", "Arqueología", "Historia", "Filosofía", "Traducción e interpretación", "Literatura", "Economía",  "Psicología", "Criminología", "Geografía","Periodismo","Finanzas y contabilidad","Administración y empresa","Gestión y administración pública","Derecho","Biología","Bioquímica","Biotecnología","Biomedicina","Química","Ciencias del mar","Geología","Física","Matemáticas","Estadística","Informática","Ingeniería de telecomunicación","Ingeniería mecánica", "Ingeniería aeronáutica","Arquitectura y Urbanismo y paisajismo","Ingeniería geomática, topografía y cartografía","Arquitectura técnica","Veterinaria","Odontología","Medicina","Enfermería","Ingeniería biomédica y de la salud","Óptica y optometría","Fisioterapia"))
+zz_1 <- zz %>% group_by(titulacion) %>% arrange(desc(total)) %>% filter(sexo == "Hombres")
+
+colnames(zz_1)[2] <- "Titulación"
+
+colnames(zz_1)[3] <- "Tasa de paro"
+
+colnames(zz_1)[4] <- "Porcentaje"
+#Datatable para ambos sexos 
+zz_3  <- zz %>% group_by(titulacion) %>% arrange(desc(total)) %>% filter(sexo == "Ambos sexos")
+
+colnames(zz_3)[2] <- "Titulación"
+
+colnames(zz_3)[3] <- "Tasa de paro"
+
+colnames(zz_3)[4] <- "Porcentaje"
+
+library(DT)
+datatable(zz_3)
+
+```
+
+En esta tabla se muestra un ranking de las carreras con mayor tasa de paro en España en el año 2019.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#| code-fold: true
+#| label: names
+#| echo: true
+#| eval: false
+#| warning: false
+library(tidyverse)
+
+fs::dir_create("pruebas") #- primero creamos la carpeta "pruebas"
+my_url <- "https://ine.es/jaxi/files/tpx/es/csv_bd/48895.csv?nocab=1" #-pongo el link de la página del INE
+curl::curl_download(my_url, "./pruebas/segunestudios.csv")
+segunestudios <- rio::import("./pruebas/segunestudios.csv")
+
+#arreglo los datos quitando las comas
+segunestudios <- read_delim("pruebas/segunestudios.csv", 
+                            delim = "\t", escape_double = FALSE, 
+                            col_types = cols(Total = col_number()),  
+                            locale = locale(date_names = "es", decimal_mark = ",", grouping_mark = "."), 
+                            trim_ws = TRUE)
+#-Arreglo los nombres
+
+segunestudios <- janitor::clean_names(segunestudios)
+zz <- pjpv.curso.R.2022::pjp_valores_unicos(segunestudios)
+
+#-Arreglo función
+zz <- segunestudios %>% filter(tasas_de_actividad_empleo_y_paro == "Tasa de paro") %>% filter(titulacion %in% c("Pedagogía", "Educación infantil", "Educación primaria", "Bellas artes", "Conservación y restauración", "Arqueología", "Historia", "Filosofía", "Traducción e interpretación", "Literatura", "Economía",  "Psicología", "Criminología", "Geografía","Periodismo","Finanzas y contabilidad","Administración y empresa","Gestión y administración pública","Derecho","Biología","Bioquímica","Biotecnología","Biomedicina","Química","Ciencias del mar","Geología","Física","Matemáticas","Estadística","Informática","Ingeniería de telecomunicación","Ingeniería mecánica", "Ingeniería aeronáutica","Arquitectura y Urbanismo y paisajismo","Ingeniería geomática, topografía y cartografía","Arquitectura técnica","Veterinaria","Odontología","Medicina","Enfermería","Ingeniería biomédica y de la salud","Óptica y optometría","Fisioterapia"))
+zz_1 <- zz %>% group_by(titulacion) %>% arrange(desc(total)) %>% filter(sexo == "Hombres")
+
+colnames(zz_1)[2] <- "Titulación"
+
+colnames(zz_1)[3] <- "Tasa de paro"
+
+colnames(zz_1)[4] <- "Porcentaje"
+
+#tabla para hombres
+
+library(kableExtra)
+
+kbl(zz_1) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = F
+  ) %>%
+  column_spec(2, color = "teal", bold = TRUE) %>%
+  column_spec(
+    4,
+    color = "red")
+```
+
+En esta tabla se muestra un ranking de las carreras con más tasa de paro para hombres
+
+
+## CONCLUSIÓN
+
+España es uno de los países con mayor tasa de paro registrado hitóricamente en Europa. La tasa de paro esta distribuída de manera muy desigual por comunidades autónomas, esta distribución desigual se debe en parte a la falta de movilidad entre empresas y trabajadores por culpa de las competencias desiguales de cada comunidad. 
+Las carreras que presentan mayores tasas de paro són Conservación y restauración, Filosofía y Literatura.
